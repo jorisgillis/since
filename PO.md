@@ -2,7 +2,7 @@
 
 ## Status
 **Current version**: V3
-**Stage**: Planning
+**Stage**: Shipped
 
 ## Shipped
 <!-- Items that have been released, oldest first -->
@@ -15,9 +15,6 @@
 - Add support for a configuration file (~/.config/since/config.toml) (V2)
 - Allow users to define custom events in the configuration file (V2)
 - Categories for organizing events (V3)
-
-## In Development
-<!-- Items being actively built right now -->
 - Interactive mode for selecting events (V3)
 - Support for JSON and plain text output formats (V3)
 - Multiple ASCII art themes (V3)
@@ -30,14 +27,15 @@
 - Generate example config.toml file (V3)
 - Default behavior: print default event when no arguments are provided (V3)
 
+## In Development
+<!-- Items being actively built right now -->
+
 ## Planned
 <!-- Agreed for a future version but not yet started -->
 
 ## Backlog
 <!-- Ideas and requests not yet assigned to a version -->
 - Advanced time calculations (e.g., business days, time zones)
-- Interactive mode for selecting events
-- Multiple output formats (e.g., JSON, plain text)
 
 ## Key Decisions
 | Date       | Decision                          | Rationale                          |
