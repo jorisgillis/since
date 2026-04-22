@@ -27,6 +27,8 @@
 - Export and import functionality for custom events (V3)
 - Search functionality for events (V3)
 - List all events in a table format (V3)
+- Generate example config.toml file (V3)
+- Default behavior: print default event when no arguments are provided (V3)
 
 ## Planned
 <!-- Agreed for a future version but not yet started -->

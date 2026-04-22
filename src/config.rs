@@ -18,6 +18,41 @@ pub struct CustomEvent {
     pub category: Option<String>,
 }
 
+pub fn export_events(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(config) = load_config() {
+        let json = serde_json::to_string_pretty(&config.custom_events)?;
+        fs::write(path, json)?;
+        Ok(())
+    } else {
+        Err("No config file found".into())
+    }
+}
+
+pub fn import_events(path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let json = fs::read_to_string(path)?;
+    let imported_events: Vec<CustomEvent> = serde_json::from_str(&json)?;
+    
+    let config_path = get_config_path();
+    let mut config = if config_path.exists() {
+        let config_content = fs::read_to_string(&config_path)?;
+        toml::from_str(&config_content)?
+    } else {
+        Config {
+            default_event: None,
+            custom_events: Vec::new(),
+        }
+    };
+    
+    // Merge imported events with existing events
+    config.custom_events.extend(imported_events);
+    
+    // Save the updated config
+    let toml = toml::to_string(&config)?;
+    fs::write(&config_path, toml)?;
+    
+    Ok(())
+}
+
 pub fn get_events_by_category(category: &str) -> Vec<crate::events::Event> {
     let mut events = Vec::new();
     if let Some(config) = load_config() {

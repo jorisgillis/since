@@ -1,20 +1,20 @@
 use clap::{Parser, Subcommand};
-use serde_json;
+use chrono::{Duration, TimeDelta};
 
-mod events;
-mod time_utils;
 mod config;
-mod output;
+mod events;
 mod interactive;
+mod output;
+mod time_utils;
 
 #[derive(Parser)]
 #[command(name = "since")]
 #[command(about = "A fun CLI tool to show time elapsed since an event", long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
     /// Output format (ascii, plain, json)
-    #[arg(short, long, default_value = "ascii")]
+    #[arg(short, long, default_value = "plain")]
     format: String,
     /// ASCII art theme (simple, fancy, colored)
     #[arg(short, long, default_value = "simple")]
@@ -60,6 +60,18 @@ enum Commands {
     },
     /// List all events in a table format
     List,
+    /// Generate an example config.toml file
+    GenerateConfig,
+    /// Export custom events to a JSON file
+    Export {
+        /// Path to the output JSON file
+        path: String,
+    },
+    /// Import custom events from a JSON file
+    Import {
+        /// Path to the input JSON file
+        path: String,
+    },
 }
 
 impl Commands {
@@ -72,130 +84,241 @@ fn main() {
     let cli = Cli::parse();
 
     let (event_name, time_remaining) = match &cli.command {
-        Commands::Predefined { event } => {
-            let event = match event {
-                Some(event_name) => {
-                    if let Some(e) = events::get_predefined_event(event_name) {
-                        e
-                    } else if let Some(e) = events::get_custom_event_from_config(event_name) {
-                        e
-                    } else {
-                        eprintln!("Unknown event: {}", event_name);
-                        std::process::exit(1);
-                    }
-                }
-                None => {
-                    if let Some(config) = config::load_config() {
-                        if let Some(default_event) = config.default_event {
-                            if let Some(e) = events::get_predefined_event(&default_event) {
-                                e
-                            } else if let Some(e) = events::get_custom_event_from_config(&default_event) {
-                                e
-                            } else {
-                                events::get_random_predefined_event()
-                            }
-                        } else {
-                            events::get_random_predefined_event()
-                        }
-                    } else {
-                        events::get_random_predefined_event()
-                    }
-                }
-            };
-            (event.name.clone(), Some(time_utils::calculate_elapsed_time(&event)))
-        }
-        Commands::Custom { name, datetime, timezone } => {
-            match time_utils::parse_datetime_with_timezone(datetime, timezone.as_deref()) {
-                Some(dt) => {
-                    let event = events::Event {
-                        name: name.clone(),
-                        timestamp: dt,
-                    };
-                    (event.name.clone(), Some(time_utils::calculate_elapsed_time(&event)))
-                }
-                None => {
-                    eprintln!("Invalid datetime format or timezone");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::Countdown { name, datetime, timezone } => {
-            match time_utils::calculate_time_until(datetime, timezone.as_deref()) {
-                Some(duration) => (name.clone(), Some(duration)),
-                None => {
-                    eprintln!("Event is in the past");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Commands::Interactive => {
-            let event = interactive::interactive_mode();
-            (event.name.clone(), Some(time_utils::calculate_elapsed_time(&event)))
-        }
-        Commands::Search { query } => {
-            let events = events::search_events(query);
-            if events.is_empty() {
-                eprintln!("No events found matching: {}", query);
-                std::process::exit(1);
-            }
-            let event = &events[0];
-            (event.name.clone(), Some(time_utils::calculate_elapsed_time(event)))
-        }
-        Commands::Category { category } => {
-            match category {
-                Some(cat) => {
-                    let events = config::get_events_by_category(cat);
-                    if events.is_empty() {
-                        eprintln!("No events found in category: {}", cat);
-                        std::process::exit(1);
-                    }
-                    let event = &events[0];
-                    (event.name.clone(), Some(time_utils::calculate_elapsed_time(event)))
-                }
-                None => {
-                    let categories = config::get_all_categories();
-                    if categories.is_empty() {
-                        eprintln!("No categories found");
-                        std::process::exit(1);
-                    }
-                    println!("Available categories:");
-                    for category in categories {
-                        println!("- {}", category);
-                    }
-                    std::process::exit(0);
-                }
-            }
-        }
-        Commands::List => {
-            let all_events = events::get_all_events();
-            if all_events.is_empty() {
-                eprintln!("No events found");
-                std::process::exit(1);
-            }
-            println!("{:<30} {:<20}", "Name", "Date");
-            println!("{:<30} {:<20}", "-", "---");
-            for event in all_events {
-                let date = event.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
-                println!("{:<30} {:<20}", event.name, date);
-            }
-            std::process::exit(0);
-        }
+        None => handle_default_behavior(),
+        Some(command) => handle_command(command),
     };
 
     let time_remaining = time_remaining.expect("Time remaining should be calculated");
     let formatted_time = output::format_duration(time_remaining);
-    let message = if cli.command.is_countdown() {
+    let message = if cli.command.as_ref().map_or(false, |cmd| cmd.is_countdown()) {
         format!("{} until {}", formatted_time, event_name)
     } else {
         format!("It has been {} since {}", formatted_time, event_name)
     };
 
+    handle_output(&cli, &message, &event_name);
+}
+
+fn handle_default_behavior() -> (String, Option<Duration>) {
+    if let Some(config) = config::load_config() {
+        if let Some(default_event) = config.default_event {
+            if let Some(e) = events::get_predefined_event(&default_event) {
+                (e.name.clone(), Some(time_utils::calculate_elapsed_time(&e)))
+            } else if let Some(e) = events::get_custom_event_from_config(&default_event) {
+                (e.name.clone(), Some(time_utils::calculate_elapsed_time(&e)))
+            } else {
+                let event = events::get_random_predefined_event();
+                (event.name.clone(), Some(time_utils::calculate_elapsed_time(&event)))
+            }
+        } else {
+            let event = events::get_random_predefined_event();
+            (event.name.clone(), Some(time_utils::calculate_elapsed_time(&event)))
+        }
+    } else {
+        let event = events::get_random_predefined_event();
+        (event.name.clone(), Some(time_utils::calculate_elapsed_time(&event)))
+    }
+}
+
+fn handle_command(command: &Commands) -> (String, Option<Duration>) {
+    match command {
+        Commands::Predefined { event } => handle_predefined_event(event),
+        Commands::Custom { name, datetime, timezone } => handle_custom_event(name, datetime, timezone),
+        Commands::Countdown { name, datetime, timezone } => handle_countdown(name, datetime, timezone),
+        Commands::Interactive => handle_interactive(),
+        Commands::Search { query } => handle_search(query),
+        Commands::Category { category } => handle_category(category),
+        Commands::List => handle_list(),
+        Commands::GenerateConfig => handle_generate_config(),
+        Commands::Export { path } => handle_export(path),
+        Commands::Import { path } => handle_import(path),
+    }
+}
+
+fn handle_predefined_event(event: &Option<String>) -> (String, Option<Duration>) {
+    let event = match event {
+        Some(event_name) => {
+            if let Some(e) = events::get_predefined_event(event_name) {
+                e
+            } else if let Some(e) = events::get_custom_event_from_config(event_name) {
+                e
+            } else {
+                eprintln!("Unknown event: {}", event_name);
+                std::process::exit(1);
+            }
+        }
+        None => {
+            if let Some(config) = config::load_config() {
+                if let Some(default_event) = config.default_event {
+                    if let Some(e) = events::get_predefined_event(&default_event) {
+                        e
+                    } else if let Some(e) = events::get_custom_event_from_config(&default_event) {
+                        e
+                    } else {
+                        events::get_random_predefined_event()
+                    }
+                } else {
+                    events::get_random_predefined_event()
+                }
+            } else {
+                events::get_random_predefined_event()
+            }
+        }
+    };
+    (event.name.clone(), Some(time_utils::calculate_elapsed_time(&event)))
+}
+
+fn handle_custom_event(name: &str, datetime: &str, timezone: &Option<String>) -> (String, Option<Duration>) {
+    match time_utils::parse_datetime_with_timezone(datetime, timezone.as_deref()) {
+        Some(dt) => {
+            let event = events::Event {
+                name: name.to_string(),
+                timestamp: dt,
+            };
+            (event.name.clone(), Some(time_utils::calculate_elapsed_time(&event)))
+        }
+        None => {
+            eprintln!("Invalid datetime format or timezone");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn handle_countdown(name: &str, datetime: &str, timezone: &Option<String>) -> (String, Option<Duration>) {
+    match time_utils::calculate_time_until(datetime, timezone.as_deref()) {
+        Some(duration) => (name.to_string(), Some(duration)),
+        None => {
+            eprintln!("Event is in the past");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn handle_interactive() -> (String, Option<Duration>) {
+    let event = interactive::interactive_mode();
+    (event.name.clone(), Some(time_utils::calculate_elapsed_time(&event)))
+}
+
+fn handle_search(query: &str) -> (String, Option<Duration>) {
+    let events = events::search_events(query);
+    if events.is_empty() {
+        eprintln!("No events found matching: {}", query);
+        std::process::exit(1);
+    }
+    let event = &events[0];
+    (event.name.clone(), Some(time_utils::calculate_elapsed_time(event)))
+}
+
+fn handle_category(category: &Option<String>) -> (String, Option<Duration>) {
+    match category {
+        Some(cat) => {
+            let events = config::get_events_by_category(cat);
+            if events.is_empty() {
+                eprintln!("No events found in category: {}", cat);
+                std::process::exit(1);
+            }
+            let event = &events[0];
+            (event.name.clone(), Some(time_utils::calculate_elapsed_time(event)))
+        }
+        None => {
+            let categories = config::get_all_categories();
+            if categories.is_empty() {
+                eprintln!("No categories found");
+                std::process::exit(1);
+            }
+            println!("Available categories:");
+            for category in categories {
+                println!("- {}", category);
+            }
+            std::process::exit(0);
+        }
+    }
+}
+
+fn handle_list() -> (String, Option<TimeDelta>) {
+    let all_events = events::get_all_events();
+    if all_events.is_empty() {
+        eprintln!("No events found");
+        std::process::exit(1);
+    }
+    println!("{:<30} {:<20}", "Name", "Date");
+    println!("{:<30} {:<20}", "-", "---");
+    for event in all_events {
+        let date = event.timestamp.format("%Y-%m-%d %H:%M:%S").to_string();
+        println!("{:<30} {:<20}", event.name, date);
+    }
+    std::process::exit(0);
+}
+
+fn handle_generate_config() -> (String, Option<TimeDelta>) {
+    let config_path = config::get_config_path();
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).expect("Failed to create config directory");
+    }
+    let example_config = r#"# Example configuration file for 'since'
+# Place this file at: ~/.config/since/config.toml
+
+# Set a default event to use when no event is specified
+default_event = "Last man on the moon"
+
+# Define custom events
+[[custom_events]]
+name = "My Birthday"
+datetime = "1990-01-01T00:00:00"
+timezone = "America/New_York"
+category = "Personal"
+
+[[custom_events]]
+name = "Project Deadline"
+datetime = "2023-12-31T23:59:59"
+timezone = "UTC"
+recurrence = "yearly"
+category = "Work"
+
+[[custom_events]]
+name = "Anniversary"
+datetime = "2020-06-15T12:00:00"
+timezone = "Europe/Paris"
+category = "Personal"
+"#;
+    std::fs::write(&config_path, example_config).expect("Failed to write config file");
+    println!("Example config.toml generated at: {}", config_path.display());
+    std::process::exit(0);
+}
+
+fn handle_export(path: &str) -> (String, Option<TimeDelta>) {
+    match config::export_events(path) {
+        Ok(_) => {
+            println!("Events exported successfully to: {}", path);
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("Failed to export events: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn handle_import(path: &str) -> (String, Option<TimeDelta>) {
+    match config::import_events(path) {
+        Ok(_) => {
+            println!("Events imported successfully from: {}", path);
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("Failed to import events: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn handle_output(cli: &Cli, message: &str, event_name: &str) {
     match cli.format.as_str() {
         "ascii" => {
             let ascii_art = match cli.theme.as_str() {
-                "simple" => output::generate_ascii_art(&message),
-                "fancy" => output::generate_fancy_ascii_art(&message),
-                "colored" => output::generate_colored_ascii_art(&message),
+                "simple" => output::generate_ascii_art(message),
+                "fancy" => output::generate_fancy_ascii_art(message),
+                "colored" => output::generate_colored_ascii_art(message),
                 _ => {
                     eprintln!("Unknown theme: {}", cli.theme);
                     std::process::exit(1);
@@ -209,8 +332,8 @@ fn main() {
         "json" => {
             let json_output = serde_json::json!({
                 "event": event_name,
-                "time_remaining": formatted_time,
-                "is_countdown": cli.command.is_countdown(),
+                "time_remaining": message,
+                "is_countdown": cli.command.as_ref().map_or(false, |cmd| cmd.is_countdown()),
             });
             println!("{}", json_output);
         }

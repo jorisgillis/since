@@ -11,7 +11,7 @@ pub fn format_duration(duration: Duration) -> String {
     let seconds = duration.num_seconds() % 60;
 
     format!(
-        "{} years, {} months, {} days, {} hours, {} minutes, {} seconds",
+        "{}y {}mo {}d {}h {}m {}s",
         years, months, days, hours, minutes, seconds
     )
 }

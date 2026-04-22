@@ -19,12 +19,34 @@ pub fn calculate_time_until(datetime: &str, timezone: Option<&str>) -> Option<Du
 pub fn parse_datetime_with_timezone(datetime: &str, timezone: Option<&str>) -> Option<DateTime<Utc>> {
     if let Some(tz_str) = timezone {
         if let Ok(tz) = tz_str.parse::<Tz>() {
+            // Try to parse the datetime as RFC 3339
             if let Ok(dt) = DateTime::parse_from_rfc3339(datetime) {
                 return Some(dt.with_timezone(&tz).with_timezone(&Utc));
+            } else {
+                // If parsing fails, try to append a "+00:00" to handle datetimes without timezone offsets
+                let datetime_with_z = if datetime.ends_with('Z') {
+                    datetime.to_string()
+                } else {
+                    format!("{}+00:00", datetime)
+                };
+                if let Ok(dt) = DateTime::parse_from_rfc3339(&datetime_with_z) {
+                    return Some(dt.with_timezone(&tz).with_timezone(&Utc));
+                }
             }
         }
     }
-    DateTime::parse_from_rfc3339(datetime).ok()?.with_timezone(&Utc).into()
+    // Try to parse the datetime as RFC 3339 without timezone
+    if let Ok(dt) = DateTime::parse_from_rfc3339(datetime) {
+        return Some(dt.with_timezone(&Utc));
+    } else {
+        // If parsing fails, try to append a "+00:00" to handle datetimes without timezone offsets
+        let datetime_with_z = if datetime.ends_with('Z') {
+            datetime.to_string()
+        } else {
+            format!("{}+00:00", datetime)
+        };
+        DateTime::parse_from_rfc3339(&datetime_with_z).ok()?.with_timezone(&Utc).into()
+    }
 }
 
 pub fn calculate_last_occurrence(datetime: &str, timezone: Option<&str>, recurrence: Option<&str>) -> Option<DateTime<Utc>> {
